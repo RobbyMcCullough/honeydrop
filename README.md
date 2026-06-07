@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/emblem.png" width="120" alt="Honeydrop">
+  <img src="assets/emblem.png" width="120" alt="honeydrop">
 </p>
 
 # honeydrop
@@ -13,7 +13,7 @@ make a thing → drop it in → get a URL → share it
 ## How it works
 
 ```
-upload.yourdomain.com          (Caddy basic auth → Honeydrop)
+upload.yourdomain.com          (Caddy basic auth → honeydrop)
       ↓
   POST /upload
       ↓
@@ -44,7 +44,7 @@ npm install --omit=dev
 
 ### 2. Create the shared directory
 
-This is where published documents are written. It should be outside the Honeydrop repo so it is never accidentally overwritten by a git pull.
+This is where published documents are written. It should be outside the honeydrop repo so it is never accidentally overwritten by a git pull.
 
 ```bash
 mkdir -p /var/www/your-shared-dir

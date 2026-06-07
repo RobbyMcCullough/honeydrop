@@ -1,13 +1,13 @@
-# Honeydrop — Agent Deployment Brief
+# honeydrop — Agent Deployment Brief
 
-This document is written for an AI agent. It covers everything needed to deploy Honeydrop from scratch on a fresh Ubuntu server running Caddy. Follow the steps in order. Verify each step before proceeding.
+This document is written for an AI agent. It covers everything needed to deploy honeydrop from scratch on a fresh Ubuntu server running Caddy. Follow the steps in order. Verify each step before proceeding.
 
 ## What you are building
 
-Honeydrop is a private upload service. The owner drops an HTML or Markdown file into a drag-and-drop UI, and it is published immediately at a clean public URL. The public site stays static. The upload surface is authenticated. The backend is a small Node.js app that Caddy reverse-proxies to.
+honeydrop is a private upload service. The owner drops an HTML or Markdown file into a drag-and-drop UI, and it is published immediately at a clean public URL. The public site stays static. The upload surface is authenticated. The backend is a small Node.js app that Caddy reverse-proxies to.
 
 ```
-upload.yourdomain.com   →  Caddy basic auth  →  Honeydrop (127.0.0.1:3001)
+upload.yourdomain.com   →  Caddy basic auth  →  honeydrop (127.0.0.1:3001)
 yourdomain.com/s/<slug>  →  Caddy file_server  →  /path/to/shared/<slug>/index.html
 ```
 
@@ -46,7 +46,7 @@ mkdir -p APP_DIR SHARED_DIR
 
 Verify: `ls /var/www/` should show both directories.
 
-### 2. Clone Honeydrop
+### 2. Clone honeydrop
 
 ```bash
 git clone https://github.com/RobbyMcCullough/honeydrop.git APP_DIR
@@ -65,7 +65,7 @@ curl -s http://127.0.0.1:3001/ | grep -o '<title>[^<]*</title>'
 kill %1
 ```
 
-Expected output: `<title>Honeydrop</title>`
+Expected output: `<title>honeydrop</title>`
 
 If this fails, check Node version and that dependencies installed correctly.
 
@@ -216,7 +216,7 @@ DNS has propagated but Caddy hasn't provisioned the certificate yet. Verify port
 **Upload returns 413**
 The file exceeds `MAX_BYTES`. Increase the limit in the systemd service file and restart, or reduce the file size.
 
-**Honeydrop service fails to start**
+**honeydrop service fails to start**
 Check `journalctl -u honeydrop -n 50 --no-pager` for the error. Common causes: wrong `WorkingDirectory`, Node not found at `/usr/bin/node`, or `SHARED_DIR` path doesn't exist.
 
 **Published page not found at /s/<slug>/**
@@ -224,4 +224,4 @@ Confirm `SHARED_DIR` in the service file matches the `root` path in the Caddyfil
 
 ## Keeping the shared directory safe
 
-The `SHARED_DIR` is not part of the Honeydrop git repository and will not be affected by `git pull`. Do not place it inside `APP_DIR`. Back it up separately if the published documents matter.
+The `SHARED_DIR` is not part of the honeydrop git repository and will not be affected by `git pull`. Do not place it inside `APP_DIR`. Back it up separately if the published documents matter.
