@@ -2,7 +2,7 @@
   <img src="assets/emblem.png" width="120" alt="Honeydrop">
 </p>
 
-# Honeydrop
+# honeydrop
 
 A small private upload service that publishes static documents at clean URLs. Drop an HTML file or a Markdown note, get a shareable link back. Built on Node.js and Caddy.
 
