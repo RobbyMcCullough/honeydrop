@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import multipart from '@fastify/multipart'
 import { writeFile, mkdir, access, readdir, stat, rm } from 'fs/promises'
-import { join, extname, resolve } from 'path'
+import { join, extname, resolve, basename, sep } from 'path'
 import { marked } from 'marked'
 import { randomBytes } from 'crypto'
 
@@ -14,12 +14,16 @@ const PORT        = parseInt(process.env.PORT || '3001', 10)
 const HOST        = process.env.HOST || '127.0.0.1'
 const MAX_BYTES   = parseInt(process.env.MAX_BYTES || String(10 * 1024 * 1024), 10)
 
-const ALLOWED = new Set(['.html', '.htm', '.md', '.txt'])
+// The single document that becomes the published page.
+const DOC_ALLOWED   = new Set(['.html', '.htm', '.md', '.txt'])
+// Sibling assets written alongside it, so relative <img src> just resolves.
+const ASSET_ALLOWED = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif', '.ico', '.bmp'])
+const MAX_FILES     = parseInt(process.env.MAX_FILES || '20', 10)
 
 const fastify = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info' } })
 
 fastify.register(multipart, {
-  limits: { fileSize: MAX_BYTES, files: 1, fields: 1 }
+  limits: { fileSize: MAX_BYTES, files: MAX_FILES, fields: 1 }
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -52,6 +56,18 @@ async function uniqueSlug(base) {
       return slug
     }
   }
+}
+
+// Reduce an uploaded asset's filename to a safe, flat name that cannot escape
+// the slug directory. Returns null if the name is unusable or would collide
+// with the generated page.
+function safeAssetName(filename) {
+  const name = basename(filename || '').trim()
+  if (!name || name === '.' || name === '..') return null
+  if (name.includes('\0')) return null
+  if (name.toLowerCase() === 'index.html') return null
+  if (name.length > 120) return null
+  return name
 }
 
 function escapeHtml(s) {
@@ -279,10 +295,10 @@ const UI = `<!doctype html>
     <div class="card">
       <form id="form">
         <div class="drop" id="drop">
-          <input type="file" id="file" accept=".html,.htm,.md,.txt">
+          <input type="file" id="file" multiple accept=".html,.htm,.md,.txt,.png,.jpg,.jpeg,.gif,.svg,.webp,.avif,.ico,.bmp,image/*">
           <div class="drop-label">
-            <strong>Drop a file or click to browse</strong>
-            <span class="hint">.html &middot; .md &middot; .txt</span>
+            <strong>Drop files or click to browse</strong>
+            <span class="hint">one .html &middot; .md &middot; .txt, plus any images it references</span>
           </div>
         </div>
         <div class="chosen" id="chosen"></div>
@@ -318,7 +334,9 @@ const UI = `<!doctype html>
     const flashUrl   = document.getElementById('flash-url')
     const inlineCopy = document.getElementById('inline-copy')
     const fileList   = document.getElementById('file-list')
-    let selectedFile = null
+    let selectedFiles = []
+
+    const DOC_RE = /\\.(html?|md|txt)$/i
 
     const ICON_COPY  = \`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>\`
     const ICON_TRASH = \`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>\`
@@ -394,30 +412,44 @@ const UI = `<!doctype html>
       }
     }
 
-    function onFile(f) {
-      if (!f) return
-      selectedFile = f
-      chosen.textContent = f.name
+    function onFiles(list) {
+      const files = Array.from(list || [])
+      if (!files.length) return
+      selectedFiles = files
+
+      const docs = files.filter(f => DOC_RE.test(f.name))
+      const assets = files.filter(f => !DOC_RE.test(f.name))
+
+      if (docs.length !== 1) {
+        chosen.innerHTML = '<span style="color:#f08888">Select exactly one .md/.html/.txt document (plus any images).</span>'
+        btn.disabled = true
+        return
+      }
+
+      const parts = [docs[0].name]
+      if (assets.length) parts.push('+ ' + assets.length + ' image' + (assets.length === 1 ? '' : 's'))
+      chosen.textContent = parts.join('  ')
+
       if (!slugInput.value) {
-        slugInput.placeholder = f.name.replace(/\\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+        slugInput.placeholder = docs[0].name.replace(/\\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
       }
       btn.disabled = false
     }
 
-    fileInput.addEventListener('change', () => onFile(fileInput.files[0]))
+    fileInput.addEventListener('change', () => onFiles(fileInput.files))
     drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over') })
     drop.addEventListener('dragleave', () => drop.classList.remove('over'))
-    drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); onFile(e.dataTransfer.files[0]) })
+    drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); onFiles(e.dataTransfer.files) })
 
     form.addEventListener('submit', async e => {
       e.preventDefault()
-      if (!selectedFile) return
+      if (!selectedFiles.length) return
       btn.disabled = true
       btn.textContent = 'Publishing…'
       flash.style.display = 'none'
 
       const fd = new FormData()
-      fd.append('file', selectedFile)
+      selectedFiles.forEach(f => fd.append('file', f))
       if (slugInput.value.trim()) fd.append('slug', slugInput.value.trim())
 
       try {
@@ -426,7 +458,8 @@ const UI = `<!doctype html>
         flash.style.display = 'block'
         if (data.ok) {
           flash.className = 'flash ok'
-          flashUrl.innerHTML = '<a href="' + data.url + '" target="_blank">' + data.url + '</a>'
+          const note = data.assets ? ' <span style="color:#7a5a20">(' + data.assets + ' image' + (data.assets === 1 ? '' : 's') + ')</span>' : ''
+          flashUrl.innerHTML = '<a href="' + data.url + '" target="_blank">' + data.url + '</a>' + note
           inlineCopy.style.display = 'inline-block'
           inlineCopy.onclick = () => copyText(data.url, inlineCopy)
           loadFiles()
@@ -500,38 +533,57 @@ fastify.delete('/files/:slug', async (req, reply) => {
 
 fastify.post('/upload', async (req, reply) => {
   const parts = req.parts()
-  let file = null
+  const files = []
   let customSlug = null
 
+  // Buffer every part before responding — an unconsumed part stalls the stream.
   for await (const part of parts) {
     if (part.type === 'file') {
-      file = { filename: part.filename, buffer: await part.toBuffer() }
+      files.push({ filename: part.filename, ext: extname(part.filename).toLowerCase(), buffer: await part.toBuffer() })
     } else if (part.fieldname === 'slug' && part.value?.trim()) {
       customSlug = part.value.trim()
     }
   }
 
-  if (!file) return reply.code(400).send({ ok: false, error: 'No file received' })
-  if (file.buffer.length > MAX_BYTES) {
-    return reply.code(413).send({ ok: false, error: `File too large (max ${Math.round(MAX_BYTES / 1024 / 1024)} MB)` })
+  if (!files.length) return reply.code(400).send({ ok: false, error: 'No file received' })
+
+  const oversized = files.find(f => f.buffer.length > MAX_BYTES)
+  if (oversized) {
+    return reply.code(413).send({ ok: false, error: `"${oversized.filename}" too large (max ${Math.round(MAX_BYTES / 1024 / 1024)} MB per file)` })
   }
 
-  const ext = extname(file.filename).toLowerCase()
-  if (!ALLOWED.has(ext)) {
-    return reply.code(400).send({ ok: false, error: `"${ext}" not allowed. Accepted: .html .htm .md .txt` })
+  const unknown = files.find(f => !DOC_ALLOWED.has(f.ext) && !ASSET_ALLOWED.has(f.ext))
+  if (unknown) {
+    return reply.code(400).send({ ok: false, error: `"${unknown.ext}" not allowed. Documents: .html .htm .md .txt — images: ${[...ASSET_ALLOWED].join(' ')}` })
   }
 
-  const baseSlug = customSlug ? sanitizeSlug(customSlug) : slugify(file.filename)
+  const docs = files.filter(f => DOC_ALLOWED.has(f.ext))
+  const assets = files.filter(f => ASSET_ALLOWED.has(f.ext))
+
+  if (docs.length === 0) return reply.code(400).send({ ok: false, error: 'No document found. Include one .md, .html, or .txt file.' })
+  if (docs.length > 1) return reply.code(400).send({ ok: false, error: 'Include exactly one document (.md/.html/.txt); the other files should be images.' })
+
+  const doc = docs[0]
+  const baseSlug = customSlug ? sanitizeSlug(customSlug) : slugify(doc.filename)
   if (!baseSlug) return reply.code(400).send({ ok: false, error: 'Could not derive a valid slug from the filename' })
 
+  // Resolve every asset name up front so we can reject the whole upload before
+  // writing anything, rather than leaving a half-published folder behind.
+  const namedAssets = []
+  for (const a of assets) {
+    const name = safeAssetName(a.filename)
+    if (!name) return reply.code(400).send({ ok: false, error: `Unsafe asset filename: "${a.filename}"` })
+    namedAssets.push({ name, buffer: a.buffer })
+  }
+
   const slug = await uniqueSlug(baseSlug)
-  const content = file.buffer.toString('utf8')
+  const content = doc.buffer.toString('utf8')
   const title = baseSlug.replace(/-/g, ' ')
 
   let html
-  if (ext === '.md') {
+  if (doc.ext === '.md') {
     html = wrapTemplate(title, await marked.parse(content))
-  } else if (ext === '.txt') {
+  } else if (doc.ext === '.txt') {
     html = wrapTemplate(title, `<pre>${escapeHtml(content)}</pre>`)
   } else {
     html = injectAnalytics(content)
@@ -541,10 +593,18 @@ fastify.post('/upload', async (req, reply) => {
   await mkdir(destDir, { recursive: true })
   await writeFile(join(destDir, 'index.html'), html, { flag: 'wx' })
 
-  const url = `${BASE_URL}/${slug}/`
-  fastify.log.info({ event: 'upload', slug, filename: file.filename, bytes: file.buffer.length })
+  const dirPrefix = resolve(destDir) + sep
+  for (const a of namedAssets) {
+    const dest = join(destDir, a.name)
+    // Belt-and-suspenders against traversal after safeAssetName.
+    if (!resolve(dest).startsWith(dirPrefix)) continue
+    await writeFile(dest, a.buffer, { flag: 'wx' })
+  }
 
-  return { ok: true, url }
+  const url = `${BASE_URL}/${slug}/`
+  fastify.log.info({ event: 'upload', slug, filename: doc.filename, bytes: doc.buffer.length, assets: namedAssets.length })
+
+  return { ok: true, url, assets: namedAssets.length }
 })
 
 // ── Start ──────────────────────────────────────────────────────────────────

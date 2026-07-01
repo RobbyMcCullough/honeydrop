@@ -24,6 +24,7 @@ upload.yourdomain.com          (Caddy basic auth → honeydrop)
 - Published documents live in a separate directory Caddy serves directly.
 - The upload service runs locally on `127.0.0.1` — Caddy is the only public entrypoint.
 - Markdown files are rendered to HTML. Text files are wrapped in a minimal template. HTML files are served as-is.
+- You can drop the document together with the images it references. The images are written into the same published folder, so relative links like `![](diagram.png)` resolve without any rewriting.
 - If you set an `ANALYTICS_SNIPPET`, it is injected into every published page.
 
 ## Prerequisites
@@ -90,13 +91,15 @@ Point your upload subdomain at your server's IP. Use DNS-only mode (no proxy) if
 | `ANALYTICS_SNIPPET` | no | — | HTML snippet injected into every published page (e.g. Plausible or Fathom script tag) |
 | `PORT` | no | `3001` | Port the server listens on |
 | `HOST` | no | `127.0.0.1` | Host the server binds to |
-| `MAX_BYTES` | no | `10485760` | Max upload size in bytes (default 10 MB) |
+| `MAX_BYTES` | no | `10485760` | Max size per file in bytes (default 10 MB) |
+| `MAX_FILES` | no | `20` | Max number of files per upload (the document plus its images) |
 | `LOG_LEVEL` | no | `info` | Fastify log level |
 
 ## Security
 
 - Caddy `basicauth` gates the upload UI before any request reaches the server.
-- Only `.html`, `.htm`, `.md`, and `.txt` are accepted. Everything else is rejected.
+- Each upload must contain exactly one document (`.html`, `.htm`, `.md`, or `.txt`). Alongside it you may include image assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`, `.avif`, `.ico`, `.bmp`). Anything else is rejected.
+- Asset filenames are reduced to their base name before writing, so a malicious `../` filename can never escape the published folder.
 - Slugs are sanitized to `[a-z0-9-]` and capped at 80 characters. Caller-controlled paths are not possible.
 - Files are written with `flag: 'wx'` — existing slugs are never silently overwritten. A suffix is appended instead (`slug-1`, `slug-2`, …).
 - The server binds to `127.0.0.1` by default and should never be exposed directly to the internet.
