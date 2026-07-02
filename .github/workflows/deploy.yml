@@ -1,0 +1,26 @@
+name: Deploy to DigitalOcean
+
+on:
+  push:
+    branches: [main]
+
+# Deploys the robb.ee instance (robb-upload.service) from this repo.
+# The server clone lives at /var/www/robb-upload with config in a local
+# .env (EnvironmentFile); this pulls, installs deps, and restarts the service.
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd /var/www/robb-upload
+            git pull origin main
+            npm install --omit=dev --no-audit --no-fund
+            sudo systemctl restart robb-upload
+            systemctl is-active robb-upload
