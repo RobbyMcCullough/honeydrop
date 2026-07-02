@@ -17,6 +17,12 @@ Environment=ANALYTICS_SNIPPET=
 Environment=PORT=3001
 Environment=HOST=127.0.0.1
 
+# Optional — published-page presentation & social cards
+# Environment=SITE_NAME=yourdomain.com
+# Environment=PUBLISH_CSS_URL=/upload.css
+# Environment=OG_DEFAULT_IMAGE=/assets/og/default-card.png
+# Environment=OG_DEFAULT_DESCRIPTION=A small hive for one-off pages and shared documents.
+
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5

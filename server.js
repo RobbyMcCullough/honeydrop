@@ -4,12 +4,14 @@ import { writeFile, mkdir, access, readdir, stat, rm } from 'fs/promises'
 import { join, extname, resolve, basename, sep } from 'path'
 import { marked } from 'marked'
 import { randomBytes } from 'crypto'
+import { extractFrontmatter, metadataFromMarkdown, metadataFromHtml, mergeMetadata, injectMetadata } from './upload-meta.mjs'
 
 // ── Configuration (via environment variables) ──────────────────────────────
 const SHARED_DIR  = resolve(process.env.SHARED_DIR  || './shared')
 const BASE_URL    = (process.env.BASE_URL  || 'http://localhost:3001/s').replace(/\/$/, '')
 const SITE_URL    = (process.env.SITE_URL  || '').replace(/\/$/, '')
 const ANALYTICS   = process.env.ANALYTICS_SNIPPET || ''
+const PUBLISH_CSS = process.env.PUBLISH_CSS_URL || ''  // external stylesheet for published pages; inline styles if unset
 const PORT        = parseInt(process.env.PORT || '3001', 10)
 const HOST        = process.env.HOST || '127.0.0.1'
 const MAX_BYTES   = parseInt(process.env.MAX_BYTES || String(10 * 1024 * 1024), 10)
@@ -78,13 +80,34 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;')
 }
 
-function injectAnalytics(html) {
-  if (!ANALYTICS) return html
-  if (html.includes('</head>')) {
-    return html.replace('</head>', `  ${ANALYTICS}\n</head>`)
-  }
-  return `${ANALYTICS}\n${html}`
+const PUBLISH_CSS_TAG = PUBLISH_CSS ? `<link rel="stylesheet" href="${PUBLISH_CSS}">` : ''
+
+// True if the HTML already carries embedded or linked stylesheets.
+function hasOwnStyling(html) {
+  return /<style[\s>]/i.test(html) || /<link[^>]+rel=["']stylesheet["']/i.test(html)
 }
+
+// Inject one or more tags before </head>, or prepend if there is no <head>.
+function injectIntoHead(html, ...tags) {
+  const snippet = tags.filter(Boolean).join('\n  ')
+  if (!snippet) return html
+  if (html.includes('</head>')) {
+    return html.replace('</head>', `  ${snippet}\n</head>`)
+  }
+  return `${snippet}\n${html}`
+}
+
+// Styling for wrapped markdown/text pages: an external stylesheet if
+// PUBLISH_CSS_URL is configured, otherwise a self-contained inline block.
+const DEFAULT_STYLE = `<style>
+    body{max-width:720px;margin:2rem auto;padding:0 1.25rem;font-family:system-ui,sans-serif;line-height:1.65;color:#1a1a1a}
+    a{color:#0066cc}
+    pre,code{font-family:monospace;font-size:.9em}
+    pre{background:#f5f5f5;padding:1rem;overflow-x:auto;border-radius:4px}
+    img{max-width:100%}
+    h1,h2,h3{line-height:1.25}
+    blockquote{border-left:3px solid #ddd;margin-left:0;padding-left:1rem;color:#666}
+  </style>`
 
 function wrapTemplate(title, body) {
   return `<!doctype html>
@@ -94,15 +117,7 @@ function wrapTemplate(title, body) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
   ${ANALYTICS}
-  <style>
-    body{max-width:720px;margin:2rem auto;padding:0 1.25rem;font-family:system-ui,sans-serif;line-height:1.65;color:#1a1a1a}
-    a{color:#0066cc}
-    pre,code{font-family:monospace;font-size:.9em}
-    pre{background:#f5f5f5;padding:1rem;overflow-x:auto;border-radius:4px}
-    img{max-width:100%}
-    h1,h2,h3{line-height:1.25}
-    blockquote{border-left:3px solid #ddd;margin-left:0;padding-left:1rem;color:#666}
-  </style>
+  ${PUBLISH_CSS_TAG || DEFAULT_STYLE}
 </head>
 <body>
 ${body}
@@ -578,15 +593,23 @@ fastify.post('/upload', async (req, reply) => {
 
   const slug = await uniqueSlug(baseSlug)
   const content = doc.buffer.toString('utf8')
-  const title = baseSlug.replace(/-/g, ' ')
+  const pageUrl = `${BASE_URL}/${slug}/`
 
   let html
   if (doc.ext === '.md') {
-    html = wrapTemplate(title, await marked.parse(content))
+    const [, markdownBody] = extractFrontmatter(content)
+    const metadata = mergeMetadata({ extracted: metadataFromMarkdown(content, doc.filename), url: pageUrl })
+    html = injectMetadata(wrapTemplate(metadata.title, await marked.parse(markdownBody)), metadata)
   } else if (doc.ext === '.txt') {
-    html = wrapTemplate(title, `<pre>${escapeHtml(content)}</pre>`)
+    const title = baseSlug.replace(/-/g, ' ')
+    const metadata = mergeMetadata({ extracted: { title }, url: pageUrl })
+    html = injectMetadata(wrapTemplate(title, `<pre>${escapeHtml(content)}</pre>`), metadata)
   } else {
-    html = injectAnalytics(content)
+    // HTML served as-is, but injected with analytics (+ a default stylesheet
+    // when the document carries none and PUBLISH_CSS_URL is set) and metadata.
+    const cssTag = (PUBLISH_CSS && !hasOwnStyling(content)) ? PUBLISH_CSS_TAG : null
+    const metadata = mergeMetadata({ extracted: metadataFromHtml(content, doc.filename), url: pageUrl })
+    html = injectMetadata(injectIntoHead(content, cssTag, ANALYTICS), metadata)
   }
 
   const destDir = join(SHARED_DIR, slug)

@@ -25,7 +25,9 @@ upload.yourdomain.com          (Caddy basic auth → honeydrop)
 - The upload service runs locally on `127.0.0.1` — Caddy is the only public entrypoint.
 - Markdown files are rendered to HTML. Text files are wrapped in a minimal template. HTML files are served as-is.
 - You can drop the document together with the images it references. The images are written into the same published folder, so relative links like `![](diagram.png)` resolve without any rewriting.
+- Every published page gets Open Graph / Twitter Card tags (title, description, canonical URL, and an `og:image` derived from the document's first image or `OG_DEFAULT_IMAGE`), so shared links preview nicely.
 - If you set an `ANALYTICS_SNIPPET`, it is injected into every published page.
+- Published markdown/text pages are self-styled with a minimal inline stylesheet by default; set `PUBLISH_CSS_URL` to skin them with your own stylesheet instead.
 
 ## Prerequisites
 
@@ -93,6 +95,10 @@ Point your upload subdomain at your server's IP. Use DNS-only mode (no proxy) if
 | `HOST` | no | `127.0.0.1` | Host the server binds to |
 | `MAX_BYTES` | no | `10485760` | Max size per file in bytes (default 10 MB) |
 | `MAX_FILES` | no | `20` | Max number of files per upload (the document plus its images) |
+| `SITE_NAME` | no | — | `og:site_name` on published pages (e.g. `example.com`) |
+| `PUBLISH_CSS_URL` | no | — | External stylesheet URL for published pages; falls back to a minimal inline style if unset |
+| `OG_DEFAULT_IMAGE` | no | — | Fallback `og:image` when the document references no image |
+| `OG_DEFAULT_DESCRIPTION` | no | — | Fallback description when none can be derived from the document |
 | `LOG_LEVEL` | no | `info` | Fastify log level |
 
 ## Security
