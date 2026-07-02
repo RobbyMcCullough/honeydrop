@@ -25,7 +25,7 @@ const MAX_FILES     = parseInt(process.env.MAX_FILES || '20', 10)
 const fastify = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info' } })
 
 fastify.register(multipart, {
-  limits: { fileSize: MAX_BYTES, files: MAX_FILES, fields: 1 }
+  limits: { fileSize: MAX_BYTES, files: MAX_FILES, fields: 4 }
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -226,9 +226,27 @@ const UI = `<!doctype html>
       font-size: .85rem;
       display: none;
     }
-    .flash.ok  { background: rgba(80, 180, 60, 0.1);  border: 1px solid rgba(80, 180, 60, 0.3);  }
-    .flash.err { background: rgba(200, 60, 60, 0.1);  border: 1px solid rgba(200, 60, 60, 0.3);  }
+    .flash.ok   { background: rgba(80, 180, 60, 0.1);  border: 1px solid rgba(80, 180, 60, 0.3);  }
+    .flash.err  { background: rgba(200, 60, 60, 0.1);  border: 1px solid rgba(200, 60, 60, 0.3);  }
+    .flash.warn { background: rgba(200, 130, 20, 0.1); border: 1px solid rgba(200, 130, 20, 0.35); }
     .flash-url { font-family: monospace; word-break: break-all; }
+
+    .conflict-msg { font-family: system-ui, sans-serif; margin-bottom: .65rem; color: #f0deb0; }
+    .conflict-msg strong { color: #e8b060; font-family: monospace; }
+    .conflict-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .conflict-btn {
+      flex: 1; min-width: 130px;
+      padding: .5rem .75rem;
+      border-radius: 6px;
+      font-size: .82rem; font-weight: 600;
+      cursor: pointer;
+      border: 1px solid rgba(200, 130, 20, 0.35);
+      background: #0d0900; color: #f0deb0;
+      transition: opacity .15s, background .15s;
+    }
+    .conflict-btn:hover { background: rgba(200, 130, 20, 0.12); }
+    .conflict-btn.primary { background: #e8920a; color: #0d0900; border-color: #e8920a; }
+    .conflict-btn.primary:hover { opacity: .88; }
     .flash-url a { color: #e8b060; text-decoration: none; }
     .flash-url a:hover { text-decoration: underline; }
     .inline-copy {
@@ -456,16 +474,18 @@ const UI = `<!doctype html>
     drop.addEventListener('dragleave', () => drop.classList.remove('over'))
     drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); onFiles(e.dataTransfer.files) })
 
-    form.addEventListener('submit', async e => {
-      e.preventDefault()
+    // conflict: '' asks the server (409 → prompt), 'overwrite' replaces, 'rename' makes a new URL.
+    async function doUpload(conflict) {
       if (!selectedFiles.length) return
       btn.disabled = true
       btn.textContent = 'Publishing…'
       flash.style.display = 'none'
+      inlineCopy.style.display = 'none'
 
       const fd = new FormData()
       selectedFiles.forEach(f => fd.append('file', f))
       if (slugInput.value.trim()) fd.append('slug', slugInput.value.trim())
+      if (conflict) fd.append('conflict', conflict)
 
       try {
         const res = await fetch('/upload', { method: 'POST', body: fd })
@@ -478,21 +498,31 @@ const UI = `<!doctype html>
           inlineCopy.style.display = 'inline-block'
           inlineCopy.onclick = () => copyText(data.url, inlineCopy)
           loadFiles()
+        } else if (res.status === 409 && data.conflict) {
+          flash.className = 'flash warn'
+          flashUrl.innerHTML =
+            '<div class="conflict-msg"><strong>' + data.slug + '</strong> already exists. Replace it, or publish as a new URL?</div>' +
+            '<div class="conflict-actions">' +
+              '<button type="button" class="conflict-btn primary" id="cf-overwrite">Overwrite</button>' +
+              '<button type="button" class="conflict-btn" id="cf-keep">Keep both (new URL)</button>' +
+            '</div>'
+          document.getElementById('cf-overwrite').onclick = () => doUpload('overwrite')
+          document.getElementById('cf-keep').onclick = () => doUpload('rename')
         } else {
           flash.className = 'flash err'
           flashUrl.innerHTML = '<span class="err-msg">' + (data.error || 'Upload failed') + '</span>'
-          inlineCopy.style.display = 'none'
         }
       } catch {
         flash.style.display = 'block'
         flash.className = 'flash err'
         flashUrl.innerHTML = '<span class="err-msg">Network error</span>'
-        inlineCopy.style.display = 'none'
       }
 
       btn.disabled = false
       btn.textContent = 'Publish'
-    })
+    }
+
+    form.addEventListener('submit', e => { e.preventDefault(); doUpload('') })
 
     loadFiles()
   </script>
@@ -550,6 +580,7 @@ fastify.post('/upload', async (req, reply) => {
   const parts = req.parts()
   const files = []
   let customSlug = null
+  let onConflict = ''  // '' = ask (409), 'overwrite' = replace, 'rename' = auto-suffix
 
   // Buffer every part before responding — an unconsumed part stalls the stream.
   for await (const part of parts) {
@@ -557,6 +588,8 @@ fastify.post('/upload', async (req, reply) => {
       files.push({ filename: part.filename, ext: extname(part.filename).toLowerCase(), buffer: await part.toBuffer() })
     } else if (part.fieldname === 'slug' && part.value?.trim()) {
       customSlug = part.value.trim()
+    } else if (part.fieldname === 'conflict' && part.value) {
+      onConflict = part.value
     }
   }
 
@@ -591,7 +624,23 @@ fastify.post('/upload', async (req, reply) => {
     namedAssets.push({ name, buffer: a.buffer })
   }
 
-  const slug = await uniqueSlug(baseSlug)
+  // Resolve the slug, honoring how the caller wants naming conflicts handled.
+  let slugExists = false
+  try { await access(join(SHARED_DIR, baseSlug)); slugExists = true } catch {}
+
+  let slug
+  if (slugExists && onConflict === 'overwrite') {
+    await rm(join(SHARED_DIR, baseSlug), { recursive: true, force: true })
+    slug = baseSlug
+  } else if (slugExists && onConflict === 'rename') {
+    slug = await uniqueSlug(baseSlug)
+  } else if (slugExists) {
+    // Default: don't guess — let the client prompt overwrite vs. new URL.
+    return reply.code(409).send({ ok: false, conflict: true, slug: baseSlug, url: `${BASE_URL}/${baseSlug}/` })
+  } else {
+    slug = baseSlug
+  }
+
   const content = doc.buffer.toString('utf8')
   const pageUrl = `${BASE_URL}/${slug}/`
 

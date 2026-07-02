@@ -107,7 +107,7 @@ Point your upload subdomain at your server's IP. Use DNS-only mode (no proxy) if
 - Each upload must contain exactly one document (`.html`, `.htm`, `.md`, or `.txt`). Alongside it you may include image assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`, `.avif`, `.ico`, `.bmp`). Anything else is rejected.
 - Asset filenames are reduced to their base name before writing, so a malicious `../` filename can never escape the published folder.
 - Slugs are sanitized to `[a-z0-9-]` and capped at 80 characters. Caller-controlled paths are not possible.
-- Files are written with `flag: 'wx'` — existing slugs are never silently overwritten. A suffix is appended instead (`slug-1`, `slug-2`, …).
+- Uploading to a slug that already exists never silently clobbers it: the server returns `409` and the UI asks whether to **overwrite** the existing document or **keep both** (publishing at a suffixed URL like `slug-1`). Overwrite replaces the whole published folder, so stale images from the old version are removed.
 - The server binds to `127.0.0.1` by default and should never be exposed directly to the internet.
 - Keep your shared directory separate from the app directory so a `git pull` can never affect published documents.
 

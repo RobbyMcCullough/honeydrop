@@ -3,6 +3,16 @@
 All notable changes to honeydrop are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-07-02
+
+### Added
+- Naming-conflict handling on upload. When the target slug already exists the
+  server responds `409` and the UI prompts to **overwrite** the existing
+  document or **keep both** (publish at a suffixed URL). Previously a suffix was
+  always appended silently. Overwrite replaces the entire published folder, so
+  stale assets from the prior version are cleaned up. Controlled by a new
+  optional `conflict` form field (`overwrite` | `rename`).
+
 ## [1.1.0] - 2026-07-02
 
 ### Added
